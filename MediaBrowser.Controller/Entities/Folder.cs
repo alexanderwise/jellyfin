@@ -974,15 +974,7 @@ namespace MediaBrowser.Controller.Entities
                 return QueryRecursive(query);
             }
 
-            // For non-recursive queries, use direct DB query via LibraryManager
-            // This avoids the slow GetChildren() → AddChildren() → Children property path
-            // which triggers expensive per-folder database calls
-            if (this is not UserRootFolder && this is not AggregateFolder)
-            {
-                query.Parent = this;
-            }
-
-            // Check if we need post-filtering (LinkedChildren, special filters, etc.)
+            // Check if we need the slow path (LinkedChildren)
             if (LinkedChildren.Length > 0 && this is not ICollectionFolder)
             {
                 // Fall back to old path for folders with linked children
@@ -1013,8 +1005,31 @@ namespace MediaBrowser.Controller.Entities
                 return PostFilterAndSort(items, query);
             }
 
-            // Use direct DB query - much faster for folder views
-            return LibraryManager.GetItemsResult(query);
+            // For non-recursive queries, use direct DB query via ItemRepository
+            // This avoids the slow GetChildren() → AddChildren() → Children property path
+            // Query without user (like GetCachedChildren does), then filter in PostFilterAndSort
+            var user2 = query.User;
+            var directQuery = new InternalItemsQuery
+            {
+                Parent = this,
+                GroupByPresentationUniqueKey = false,
+                DtoOptions = query.DtoOptions ?? new DtoOptions(true)
+            };
+
+            var childItems = ItemRepository.GetItemList(directQuery);
+
+            // Apply user visibility filter in memory (same as old path)
+            IEnumerable<BaseItem> filteredItems = childItems;
+            if (user2 is not null)
+            {
+                filteredItems = childItems.Where(i => i.IsVisible(user2));
+            }
+
+            // Apply additional query filters
+            Func<BaseItem, bool> queryFilter = i => UserViewBuilder.Filter(i, user2, query, UserDataManager, LibraryManager);
+            filteredItems = filteredItems.Where(queryFilter);
+
+            return PostFilterAndSort(filteredItems, query);
         }
 
         protected QueryResult<BaseItem> PostFilterAndSort(IEnumerable<BaseItem> items, InternalItemsQuery query)

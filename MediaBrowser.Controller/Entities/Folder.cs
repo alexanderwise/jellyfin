@@ -1448,10 +1448,31 @@ namespace MediaBrowser.Controller.Entities
         {
             ArgumentNullException.ThrowIfNull(user);
 
+            // Use a single DB query via AncestorIds instead of recursive tree traversal
+            // This dramatically improves performance for deeply nested folder structures
+            var descendants = LibraryManager.GetDescendants(Id, user);
+
             var result = new Dictionary<Guid, BaseItem>();
 
-            totalCount = AddChildren(user, true, result, true, query);
+            foreach (var item in descendants)
+            {
+                // Items are already filtered by visibility in GetDescendants
+                result[item.Id] = item;
+            }
 
+            // Include linked children if this folder has them
+            if (LinkedChildren.Length > 0)
+            {
+                foreach (var child in GetLinkedChildren(user))
+                {
+                    if (child.IsVisible(user))
+                    {
+                        result[child.Id] = child;
+                    }
+                }
+            }
+
+            totalCount = result.Count;
             return result.Values.ToArray();
         }
 
@@ -1476,9 +1497,30 @@ namespace MediaBrowser.Controller.Entities
 
         public IReadOnlyList<BaseItem> GetRecursiveChildren(Func<BaseItem, bool> filter, bool includeLinkedChildren)
         {
+            // Use a single DB query via AncestorIds instead of recursive tree traversal
+            // This dramatically improves performance for deeply nested folder structures
+            var descendants = LibraryManager.GetDescendants(Id, null);
+
             var result = new Dictionary<Guid, BaseItem>();
 
-            AddChildrenToList(result, includeLinkedChildren, true, filter);
+            foreach (var item in descendants)
+            {
+                if (filter is null || filter(item))
+                {
+                    result[item.Id] = item;
+                }
+            }
+
+            if (includeLinkedChildren)
+            {
+                foreach (var child in GetLinkedChildren())
+                {
+                    if (filter is null || filter(child))
+                    {
+                        result[child.Id] = child;
+                    }
+                }
+            }
 
             return result.Values.ToArray();
         }

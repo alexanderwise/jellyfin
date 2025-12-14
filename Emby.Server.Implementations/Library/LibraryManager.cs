@@ -1453,6 +1453,42 @@ namespace Emby.Server.Implementations.Library
             return result;
         }
 
+        /// <inheritdoc />
+        public IReadOnlyList<BaseItem> GetDescendants(Guid ancestorId, User? user)
+        {
+            if (ancestorId.IsEmpty())
+            {
+                return Array.Empty<BaseItem>();
+            }
+
+            var query = new InternalItemsQuery(user)
+            {
+                AncestorIds = [ancestorId],
+                DtoOptions = new DtoOptions(true)
+            };
+
+            if (user is not null)
+            {
+                AddUserToQuery(query, user);
+            }
+
+            var items = _itemRepository.GetItemList(query);
+
+            // Register items in cache for future lookups
+            foreach (var item in items)
+            {
+                RegisterItem(item);
+            }
+
+            // Filter by visibility if user is specified
+            if (user is not null)
+            {
+                return items.Where(i => i.IsVisible(user)).ToList();
+            }
+
+            return items;
+        }
+
         public IReadOnlyList<BaseItem> GetItemList(InternalItemsQuery query, bool allowExternalContent)
         {
             if (query.Recursive && !query.ParentId.IsEmpty())

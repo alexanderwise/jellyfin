@@ -215,6 +215,16 @@ namespace MediaBrowser.Controller.Library
             => throw new NotImplementedException();
 
         /// <summary>
+        /// Gets all descendant items of a folder using a single database query via AncestorIds.
+        /// This is much more efficient than recursive tree traversal for large folder hierarchies.
+        /// </summary>
+        /// <param name="ancestorId">The ancestor folder id.</param>
+        /// <param name="user">Optional user for filtering.</param>
+        /// <returns>All descendant items.</returns>
+        IReadOnlyList<BaseItem> GetDescendants(Guid ancestorId, User? user)
+            => throw new NotImplementedException();
+
+        /// <summary>
         /// Gets the intros.
         /// </summary>
         /// <param name="item">The item.</param>

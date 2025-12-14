@@ -666,26 +666,22 @@ namespace MediaBrowser.Controller.Entities
 
         public virtual int GetChildCount(User user)
         {
-            if (LinkedChildren.Length > 0)
+            // Use direct count query instead of loading all children
+            // This is much more efficient for folder views
+            var count = LibraryManager.GetCount(new InternalItemsQuery(user)
             {
-                if (this is not ICollectionFolder)
-                {
-                    return GetChildren(user, true).Count;
-                }
-            }
-
-            var result = GetItems(new InternalItemsQuery(user)
-            {
-                Recursive = false,
-                Limit = 0,
                 Parent = this,
+                Recursive = false,
                 DtoOptions = new DtoOptions(false)
-                {
-                    EnableImages = false
-                }
             });
 
-            return result.TotalRecordCount;
+            // Add linked children count if applicable
+            if (LinkedChildren.Length > 0 && this is not ICollectionFolder)
+            {
+                count += GetLinkedChildren(user).Count(c => c.IsVisible(user));
+            }
+
+            return count;
         }
 
         public virtual int GetRecursiveChildCount(User user)
@@ -978,34 +974,47 @@ namespace MediaBrowser.Controller.Entities
                 return QueryRecursive(query);
             }
 
-            var user = query.User;
-
-            Func<BaseItem, bool> filter = i => UserViewBuilder.Filter(i, user, query, UserDataManager, LibraryManager);
-
-            IEnumerable<BaseItem> items;
-
-            int totalItemCount = 0;
-            if (query.User is null)
+            // For non-recursive queries, use direct DB query via LibraryManager
+            // This avoids the slow GetChildren() → AddChildren() → Children property path
+            // which triggers expensive per-folder database calls
+            if (this is not UserRootFolder && this is not AggregateFolder)
             {
-                items = Children.Where(filter);
-                totalItemCount = items.Count();
+                query.Parent = this;
             }
-            else
+
+            // Check if we need post-filtering (LinkedChildren, special filters, etc.)
+            if (LinkedChildren.Length > 0 && this is not ICollectionFolder)
             {
-                // need to pass this param to the children.
-                // Note: Don't pass Limit/StartIndex here as pagination should happen after sorting in PostFilterAndSort
-                var childQuery = new InternalItemsQuery
+                // Fall back to old path for folders with linked children
+                var user = query.User;
+                Func<BaseItem, bool> filter = i => UserViewBuilder.Filter(i, user, query, UserDataManager, LibraryManager);
+
+                IEnumerable<BaseItem> items;
+                int totalItemCount = 0;
+
+                if (user is null)
                 {
-                    DisplayAlbumFolders = query.DisplayAlbumFolders,
-                    NameStartsWith = query.NameStartsWith,
-                    NameStartsWithOrGreater = query.NameStartsWithOrGreater,
-                    NameLessThan = query.NameLessThan
-                };
+                    items = Children.Where(filter);
+                    totalItemCount = items.Count();
+                }
+                else
+                {
+                    var childQuery = new InternalItemsQuery
+                    {
+                        DisplayAlbumFolders = query.DisplayAlbumFolders,
+                        NameStartsWith = query.NameStartsWith,
+                        NameStartsWithOrGreater = query.NameStartsWithOrGreater,
+                        NameLessThan = query.NameLessThan
+                    };
 
-                items = GetChildren(user, true, out totalItemCount, childQuery).Where(filter);
+                    items = GetChildren(user, true, out totalItemCount, childQuery).Where(filter);
+                }
+
+                return PostFilterAndSort(items, query);
             }
 
-            return PostFilterAndSort(items, query);
+            // Use direct DB query - much faster for folder views
+            return LibraryManager.GetItemsResult(query);
         }
 
         protected QueryResult<BaseItem> PostFilterAndSort(IEnumerable<BaseItem> items, InternalItemsQuery query)
